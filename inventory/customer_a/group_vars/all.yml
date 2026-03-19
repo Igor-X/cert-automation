@@ -1,0 +1,36 @@
+---
+# inventory/customer_a/group_vars/all.yml
+# Customer A — overrides for shared configuration
+#
+# Secrets are NEVER stored here — they are fetched from PasswordSafe at runtime
+# using category-based lookups within the project defined below.
+
+# PasswordSafe project that holds all credentials for Customer A
+passwordsafe_project_id: "101"
+
+# Category names used to look up credentials within the project.
+# These must match the 'category' field on the credential in PasswordSafe exactly.
+passwordsafe_digicert_credential_category: "digicert_api_key"
+passwordsafe_pfx_credential_category: "pfx_export_password"
+
+# Service account used to authenticate with the Identity service for this customer.
+# The password is vault-encrypted below.
+passwordsafe_identity_username: "svc-cert-customer-a"
+
+# Vault-encrypted Identity service password for the above account.
+# To update: ansible-vault encrypt_string 'thepassword' --name 'passwordsafe_identity_password'
+passwordsafe_identity_password: !vault |
+  $ANSIBLE_VAULT;1.1;AES256
+  # Replace this block with your vault-encrypted value
+
+# Customer A's alert recipient
+alert_smtp_to: "customer-a-ops@example.internal"
+
+# Primary domain on the cert bound to Customer A's IIS servers
+cert_domain: "www.customer-a.com"
+
+# CA provider for this customer
+cert_ca_provider: "digicert"
+
+# DigiCert organization ID (pre-validated in CertCentral)
+digicert_organization_id: "12345"

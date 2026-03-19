@@ -1,0 +1,13 @@
+---
+galaxy_info:
+  role_name: cert_renew
+  description: "Orchestrates the full certificate renewal cycle: CSR generation, CA submission, PFX distribution, IIS rebind, and post-renewal verification"
+  min_ansible_version: "2.14"
+dependencies:
+  - role: passwordsafe
+  - role: iis_bind
+  - role: cert_monitor
+collections:
+  - name: ansible.windows
+  - name: community.crypto
+  - name: community.general

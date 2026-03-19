@@ -1,0 +1,38 @@
+---
+# roles/ca_digicert/defaults/main.yml
+
+# DigiCert CertCentral API base URL
+digicert_api_base_url: "https://www.digicert.com/services/v2"
+
+# Certificate product type — most common options:
+#   ssl_plus          → DV single domain
+#   ssl_multi_domain  → DV SAN cert
+#   ssl_wildcard      → DV wildcard
+#   ssl_ev_plus       → EV single domain
+#   ssl_ov_plus       → OV single domain (most common for commercial)
+digicert_product_type: "ssl_ov_plus"
+
+# Validity period in years (DigiCert supports 1 or 2)
+digicert_validity_years: 1
+
+# Signature hash algorithm
+digicert_signature_hash: "sha256"
+
+# DigiCert organization ID — must be pre-validated in CertCentral
+# Override per-customer in their group_vars
+digicert_organization_id: ""
+
+# Server platform ID — 2 = Apache/OpenSSL (PEM), 45 = IIS (PKCS#12)
+# We use PEM here and convert to PFX ourselves for full control
+digicert_server_platform_id: 2
+
+# Polling: how often and how long to wait for issuance
+digicert_poll_interval_seconds: 30
+digicert_poll_max_attempts: 40     # 30s * 40 = 20 minutes max wait
+
+# Whether to use the DigiCert staging/test endpoint
+# Set true in dev to avoid consuming real certificate quota
+digicert_use_staging: false
+
+# Timeout for individual API calls (seconds)
+digicert_api_timeout: 30

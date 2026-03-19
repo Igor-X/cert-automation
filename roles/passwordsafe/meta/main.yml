@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  role_name: passwordsafe
+  description: "Retrieves secrets from the internal PasswordSafe API via Rackspace Cloud Identity auth"
+  min_ansible_version: "2.14"
+collections:
+  - name: ansible.builtin

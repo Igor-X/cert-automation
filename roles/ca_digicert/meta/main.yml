@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: ca_digicert
+  description: "CA abstraction module for DigiCert CertCentral REST API — issues, polls, downloads, and revokes certificates"
+  min_ansible_version: "2.14"
+dependencies:
+  - role: passwordsafe
+collections:
+  - name: ansible.builtin

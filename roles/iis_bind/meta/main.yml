@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  role_name: iis_bind
+  description: "Imports a PFX certificate and rebinds an IIS HTTPS site to the new certificate"
+  min_ansible_version: "2.14"
+dependencies:
+  - role: passwordsafe
+collections:
+  - name: ansible.windows
+  - name: community.windows

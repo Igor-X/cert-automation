@@ -1,0 +1,59 @@
+---
+# roles/ca_digicert/tasks/revoke.yml
+#
+# Revokes an issued DigiCert certificate by certificate ID.
+#
+# Required variables:
+#   digicert_cert_id      — CertCentral certificate ID to revoke
+#   digicert_revoke_reason — reason string, one of:
+#                            "key_compromise", "ca_compromise", "affiliation_changed",
+#                            "superseded", "cessation_of_operation", "unspecified"
+#
+# Usage:
+#   - ansible.builtin.include_role:
+#       name: ca_digicert
+#       tasks_from: revoke
+#     vars:
+#       digicert_cert_id: "12345678"
+#       digicert_revoke_reason: "superseded"
+
+- name: ca_digicert | Validate revocation inputs
+  ansible.builtin.assert:
+    that:
+      - digicert_cert_id is defined and digicert_cert_id | length > 0
+      - digicert_revoke_reason is defined
+      - digicert_revoke_reason in ['key_compromise', 'ca_compromise', 'affiliation_changed',
+                                    'superseded', 'cessation_of_operation', 'unspecified']
+    fail_msg: "digicert_cert_id and a valid digicert_revoke_reason are required for revocation."
+
+- name: ca_digicert | Fetch DigiCert API key from PasswordSafe
+  ansible.builtin.include_role:
+    name: passwordsafe
+    tasks_from: get_credential
+  vars:
+    passwordsafe_credential_category: "{{ passwordsafe_digicert_credential_category }}"
+
+- name: ca_digicert | Register API key
+  ansible.builtin.set_fact:
+    _digicert_api_key: "{{ passwordsafe_credential.password }}"
+  no_log: true
+
+- name: ca_digicert | Submit revocation request
+  ansible.builtin.uri:
+    url: "{{ digicert_api_base_url }}/certificate/{{ digicert_cert_id }}/revoke"
+    method: PUT
+    headers:
+      X-DC-DEVKEY: "{{ _digicert_api_key }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      comments: "Revoked by cert-automation. Reason: {{ digicert_revoke_reason }}"
+    status_code: [204, 200]
+    validate_certs: true
+    timeout: "{{ digicert_api_timeout }}"
+  delegate_to: localhost
+  no_log: true
+
+- name: ca_digicert | Confirm revocation
+  ansible.builtin.debug:
+    msg: "Certificate {{ digicert_cert_id }} revocation request submitted (reason: {{ digicert_revoke_reason }})."

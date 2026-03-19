@@ -1,0 +1,66 @@
+---
+# playbooks/bind.yml
+#
+# Imports a pre-issued PFX certificate and binds it to IIS.
+# Use this playbook when you have a certificate already issued (e.g. by
+# CertCentral manually, or for an initial deploy) and need to distribute
+# it to IIS servers without triggering a new CA order.
+#
+# Required extra vars:
+#   pfx_source_path  — absolute path to the PFX file on the control node
+#
+# Usage:
+#   ansible-playbook playbooks/bind.yml \
+#     -i inventory/customer_a/hosts.yml \
+#     -e pfx_source_path=/tmp/customer_a_new.pfx
+
+- name: IIS certificate import and bind
+  hosts: iis_servers
+  gather_facts: true
+
+  pre_tasks:
+    - name: Validate pfx_source_path is provided
+      ansible.builtin.assert:
+        that:
+          - pfx_source_path is defined
+          - pfx_source_path | length > 0
+        fail_msg: "pfx_source_path must be provided. Example: -e pfx_source_path=/tmp/cert.pfx"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Verify PFX file exists on control node
+      ansible.builtin.stat:
+        path: "{{ pfx_source_path }}"
+      register: _pfx_stat
+      delegate_to: localhost
+      run_once: true
+
+    - name: Fail if PFX file not found
+      ansible.builtin.fail:
+        msg: "PFX file not found at {{ pfx_source_path }}"
+      when: not _pfx_stat.stat.exists
+      delegate_to: localhost
+      run_once: true
+
+    - name: Read PFX as base64 for distribution
+      ansible.builtin.slurp:
+        src: "{{ pfx_source_path }}"
+      register: _pfx_b64
+      delegate_to: localhost
+      run_once: true
+      no_log: true
+
+    - name: Register PFX content for iis_bind
+      ansible.builtin.set_fact:
+        iis_pfx_content_b64: "{{ _pfx_b64.content }}"
+      no_log: true
+
+    - name: Authenticate with PasswordSafe
+      ansible.builtin.include_role:
+        name: passwordsafe
+        tasks_from: get_token
+      delegate_to: localhost
+      run_once: true
+
+  roles:
+    - role: iis_bind

@@ -1,0 +1,10 @@
+---
+# roles/ca_digicert/tasks/main.yml
+#
+# Entry point — callers use tasks_from to target specific operations:
+#
+#   tasks_from: issue      — full issue flow: fetch API key, submit CSR, poll, download
+#   tasks_from: revoke     — revoke an issued certificate by serial number
+#   tasks_from: list_orders — list recent orders from CertCentral (useful for auditing)
+#
+# This file is intentionally empty — callers use tasks_from.

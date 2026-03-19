@@ -1,0 +1,55 @@
+---
+# roles/cert_monitor/tasks/alert.yml
+#
+# Sends notifications for certs that are WARNING or CRITICAL.
+# Dispatches based on the `alert_method` variable: "email", "webhook", or "both".
+#
+# Called from main.yml when _certs_to_alert is non-empty.
+
+- name: cert_monitor | Render alert message body
+  ansible.builtin.set_fact:
+    _alert_subject: >-
+      [CERT ALERT] {{ inventory_dir | basename | upper }} —
+      {{ _certs_to_alert | selectattr('status', 'equalto', 'CRITICAL') | list | length }} CRITICAL,
+      {{ _certs_to_alert | selectattr('status', 'equalto', 'WARNING') | list | length }} WARNING
+    _alert_body: "{{ lookup('template', 'alert_email.j2') }}"
+
+# --- Email -------------------------------------------------------------------
+
+- name: cert_monitor | Send email alert
+  community.general.mail:
+    host: "{{ alert_smtp_host }}"
+    port: "{{ alert_smtp_port }}"
+    from: "{{ alert_smtp_from }}"
+    to: "{{ alert_smtp_to }}"
+    subject: "{{ _alert_subject }}"
+    body: "{{ _alert_body }}"
+    subtype: plain
+  delegate_to: localhost
+  when: alert_method in ['email', 'both']
+  run_once: true
+
+# --- Webhook (Slack / Teams / PagerDuty compatible) --------------------------
+
+- name: cert_monitor | Build webhook payload
+  ansible.builtin.set_fact:
+    _webhook_payload:
+      text: "{{ _alert_subject }}"
+      attachments:
+        - color: "{{ 'danger' if _certs_to_alert | selectattr('status', 'equalto', 'CRITICAL') | list | length > 0 else 'warning' }}"
+          text: "{{ _alert_body }}"
+          fallback: "{{ _alert_subject }}"
+  when: alert_method in ['webhook', 'both']
+
+- name: cert_monitor | Send webhook alert
+  ansible.builtin.uri:
+    url: "{{ alert_webhook_url }}"
+    method: POST
+    body_format: json
+    body: "{{ _webhook_payload }}"
+    status_code: [200, 201, 204]
+  delegate_to: localhost
+  when:
+    - alert_method in ['webhook', 'both']
+    - alert_webhook_url | length > 0
+  run_once: true

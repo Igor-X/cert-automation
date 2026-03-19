@@ -1,0 +1,204 @@
+---
+# roles/cert_renew/tasks/main.yml
+#
+# Orchestrates the full certificate renewal cycle:
+#
+#   1. Check if renewal is actually needed (skip if cert is still healthy)
+#   2. Generate a new private key and CSR on the control node
+#   3. Submit the CSR to the configured CA (delegates to ca_<provider> role)
+#   4. Poll until the CA issues the certificate
+#   5. Package the cert + key into a PFX and store the password in PasswordSafe
+#   6. Distribute the PFX to all target IIS servers (delegates to iis_bind role)
+#   7. Run cert_monitor to confirm the new cert is live and healthy
+#   8. Clean up the control node workspace
+
+# --- 1. Check whether renewal is needed --------------------------------------
+
+- name: cert_renew | Collect current cert expiry from first IIS host
+  ansible.windows.win_powershell:
+    script: |
+      $binding = Get-WebBinding -Name "{{ iis_site_name }}" -Protocol "https" -Port 443 |
+                 Select-Object -First 1
+      if (-not $binding -or -not $binding.certificateHash) {
+          Write-Output "NO_CERT"
+          exit 0
+      }
+      $cert = Get-ChildItem "Cert:\LocalMachine\{{ iis_cert_store }}" |
+              Where-Object { $_.Thumbprint -eq $binding.certificateHash } |
+              Select-Object -First 1
+      if ($cert) {
+          $days = ($cert.NotAfter - (Get-Date)).Days
+          Write-Output $days
+      } else {
+          Write-Output "CERT_NOT_IN_STORE"
+      }
+  register: _days_remaining_raw
+  delegate_to: "{{ groups['iis_servers'] | first }}"
+  run_once: true
+  changed_when: false
+
+- name: cert_renew | Register days remaining
+  ansible.builtin.set_fact:
+    _days_remaining: "{{ _days_remaining_raw.output | join('') | trim }}"
+  run_once: true
+
+- name: cert_renew | Evaluate whether renewal is required
+  ansible.builtin.set_fact:
+    _renewal_needed: >-
+      {{
+        cert_renew_force | bool or
+        _days_remaining == 'NO_CERT' or
+        _days_remaining == 'CERT_NOT_IN_STORE' or
+        (_days_remaining | int) <= cert_alert_days
+      }}
+  run_once: true
+
+- name: cert_renew | Report renewal decision
+  ansible.builtin.debug:
+    msg: >
+      {% if _renewal_needed %}
+      Renewal required. Days remaining: {{ _days_remaining }}
+      (threshold: {{ cert_alert_days }}, force: {{ cert_renew_force }})
+      {% else %}
+      Renewal not needed. Days remaining: {{ _days_remaining }}
+      (threshold: {{ cert_alert_days }}). Use cert_renew_force=true to override.
+      {% endif %}
+  run_once: true
+
+- name: cert_renew | End play early if renewal is not needed
+  ansible.builtin.meta: end_play
+  when: not _renewal_needed
+
+# --- 2. Prepare control node workspace ---------------------------------------
+
+- name: cert_renew | Ensure workspace directory exists on control node
+  ansible.builtin.file:
+    path: "{{ cert_renew_workspace }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+
+# --- 3. Generate private key and CSR on control node ------------------------
+
+- name: cert_renew | Generate private key
+  community.crypto.openssl_privatekey:
+    path: "{{ cert_renew_workspace }}/{{ cert_domain }}.key"
+    size: "{{ cert_renew_key_bits }}"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+
+- name: cert_renew | Generate CSR
+  community.crypto.openssl_csr:
+    path: "{{ cert_renew_workspace }}/{{ cert_domain }}.csr"
+    privatekey_path: "{{ cert_renew_workspace }}/{{ cert_domain }}.key"
+    common_name: "{{ cert_domain }}"
+    subject_alt_names: "{{ cert_san_list | default(['DNS:' + cert_domain]) }}"
+    country_name: "{{ cert_country | default('US') }}"
+    organization_name: "{{ cert_org | default('') }}"
+    organizational_unit_name: "{{ cert_ou | default('') }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: cert_renew | Read CSR content
+  ansible.builtin.slurp:
+    src: "{{ cert_renew_workspace }}/{{ cert_domain }}.csr"
+  register: _csr_content
+  delegate_to: localhost
+  run_once: true
+
+- name: cert_renew | Register CSR as fact
+  ansible.builtin.set_fact:
+    cert_csr_content: "{{ _csr_content.content | b64decode }}"
+  run_once: true
+
+# --- 4. Submit CSR to CA and wait for issuance -------------------------------
+# Delegates to the appropriate ca_<provider> role.
+# The ca role is responsible for setting:
+#   cert_issued_pem        — the issued certificate in PEM format
+#   cert_issued_chain_pem  — the full chain (cert + intermediates) in PEM format
+
+- name: cert_renew | Submit CSR to CA ({{ cert_ca_provider }})
+  ansible.builtin.include_role:
+    name: "ca_{{ cert_ca_provider }}"
+    tasks_from: issue
+  run_once: true
+
+# --- 5. Package cert + key into PFX ------------------------------------------
+
+- name: cert_renew | Write issued certificate chain to workspace
+  ansible.builtin.copy:
+    content: "{{ cert_issued_chain_pem }}"
+    dest: "{{ cert_renew_workspace }}/{{ cert_domain }}.chain.pem"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: cert_renew | Generate random PFX export password
+  ansible.builtin.set_fact:
+    _pfx_password: "{{ lookup('community.general.random_string', length=32, special=true) }}"
+  run_once: true
+  no_log: true
+
+- name: cert_renew | Create PFX bundle
+  community.crypto.openssl_pkcs12:
+    action: export
+    path: "{{ cert_renew_workspace }}/{{ cert_domain }}.pfx"
+    certificate_path: "{{ cert_renew_workspace }}/{{ cert_domain }}.chain.pem"
+    privatekey_path: "{{ cert_renew_workspace }}/{{ cert_domain }}.key"
+    passphrase: "{{ _pfx_password }}"
+    friendly_name: "{{ cert_domain }}"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: cert_renew | Store new PFX password in PasswordSafe
+  ansible.builtin.include_role:
+    name: passwordsafe
+    tasks_from: update_credential
+  vars:
+    passwordsafe_credential_id: "{{ passwordsafe_pfx_credential_id }}"
+    passwordsafe_credential_new_password: "{{ _pfx_password }}"
+  delegate_to: localhost
+  run_once: true
+
+- name: cert_renew | Read PFX as base64 for distribution
+  ansible.builtin.slurp:
+    src: "{{ cert_renew_workspace }}/{{ cert_domain }}.pfx"
+  register: _pfx_b64
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: cert_renew | Register PFX content as fact for iis_bind
+  ansible.builtin.set_fact:
+    iis_pfx_content_b64: "{{ _pfx_b64.content }}"
+    iis_pfx_password: "{{ _pfx_password }}"
+  no_log: true
+
+# --- 6. Distribute PFX to IIS servers and rebind -----------------------------
+
+- name: cert_renew | Import and bind certificate on IIS servers
+  ansible.builtin.include_role:
+    name: iis_bind
+  # iis_bind reads iis_pfx_content_b64 and fetches iis_pfx_password from PasswordSafe
+
+# --- 7. Post-renewal verification --------------------------------------------
+
+- name: cert_renew | Run cert_monitor to verify new cert is live
+  ansible.builtin.include_role:
+    name: cert_monitor
+  vars:
+    cert_monitor_fail_on_critical: true   # Fail hard if the new cert is still critical
+
+# --- 8. Clean up control node workspace --------------------------------------
+
+- name: cert_renew | Remove workspace from control node
+  ansible.builtin.file:
+    path: "{{ cert_renew_workspace }}"
+    state: absent
+  delegate_to: localhost
+  run_once: true

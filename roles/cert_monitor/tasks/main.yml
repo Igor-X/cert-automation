@@ -1,0 +1,139 @@
+---
+# roles/cert_monitor/tasks/main.yml
+#
+# Scans all HTTPS bindings on the target IIS site, calculates days remaining
+# on each certificate, and classifies each as OK / WARNING / CRITICAL.
+#
+# Sends alerts for WARNING and CRITICAL certs via the configured method
+# (email, webhook, or both).
+#
+# Produces a JSON report on the control node for audit/dashboarding.
+
+# --- 1. Gather cert info from each IIS server --------------------------------
+
+- name: cert_monitor | Get all HTTPS bindings for site '{{ iis_site_name }}'
+  community.windows.win_iis_webbinding:
+    name: "{{ iis_site_name }}"
+    state: present
+  register: _iis_bindings
+  check_mode: true   # read-only — we only want to gather, not modify
+
+- name: cert_monitor | Collect certificate details from Windows cert store
+  ansible.windows.win_powershell:
+    script: |
+      $results = @()
+      $bindings = Get-WebBinding -Name "{{ iis_site_name }}" -Protocol "https"
+
+      foreach ($binding in $bindings) {
+          $hash = $binding.certificateHash
+          $store = $binding.certificateStoreName
+
+          if (-not $hash) { continue }
+
+          $cert = Get-ChildItem "Cert:\LocalMachine\$store" |
+                  Where-Object { $_.Thumbprint -eq $hash } |
+                  Select-Object -First 1
+
+          if ($cert) {
+              $daysRemaining = ($cert.NotAfter - (Get-Date)).Days
+              $results += @{
+                  thumbprint      = $cert.Thumbprint
+                  subject         = $cert.Subject
+                  issuer          = $cert.Issuer
+                  not_before      = $cert.NotBefore.ToString("yyyy-MM-ddTHH:mm:ss")
+                  not_after       = $cert.NotAfter.ToString("yyyy-MM-ddTHH:mm:ss")
+                  days_remaining  = $daysRemaining
+                  binding         = $binding.bindingInformation
+                  san             = ($cert.DnsNameList | ForEach-Object { $_.Unicode }) -join ", "
+                  serial          = $cert.SerialNumber
+                  store           = $store
+              }
+          }
+      }
+
+      $results | ConvertTo-Json -Depth 5
+  register: _cert_details
+  changed_when: false
+
+- name: cert_monitor | Parse cert details into a usable fact
+  ansible.builtin.set_fact:
+    _cert_list: "{{ _cert_details.output | join('') | from_json }}"
+
+# Normalise: if only one cert is returned, PowerShell returns an object not an array
+- name: cert_monitor | Normalise cert list to always be a list
+  ansible.builtin.set_fact:
+    cert_status_list: >-
+      {{
+        [_cert_list] if _cert_list is mapping else _cert_list
+      }}
+
+# --- 2. Classify each cert ---------------------------------------------------
+
+- name: cert_monitor | Classify cert status
+  ansible.builtin.set_fact:
+    cert_status_list: >-
+      {{
+        cert_status_list | map('combine', {
+          'status': (
+            'CRITICAL' if item.days_remaining <= cert_critical_days
+            else ('WARNING' if item.days_remaining <= cert_alert_days
+            else 'OK')
+          ),
+          'hostname': inventory_hostname,
+          'customer': inventory_dir | basename
+        }) | list
+      }}
+  loop: "{{ cert_status_list }}"
+  loop_control:
+    loop_var: item
+
+# --- 3. Report ---------------------------------------------------------------
+
+- name: cert_monitor | Print cert status summary
+  ansible.builtin.debug:
+    msg: >
+      [{{ item.status }}] {{ item.hostname }} | {{ item.subject }} |
+      {{ item.days_remaining }} days remaining (expires {{ item.not_after }})
+  loop: "{{ cert_status_list }}"
+  loop_control:
+    label: "{{ item.subject }}"
+
+- name: cert_monitor | Ensure report directory exists on control node
+  ansible.builtin.file:
+    path: "{{ cert_monitor_report_path | dirname }}"
+    state: directory
+    mode: "0750"
+  delegate_to: localhost
+  run_once: true
+
+- name: cert_monitor | Write JSON report to control node
+  ansible.builtin.copy:
+    content: "{{ cert_status_list | to_nice_json }}"
+    dest: "{{ cert_monitor_report_path }}"
+    mode: "0640"
+  delegate_to: localhost
+  run_once: true
+
+# --- 4. Alert on WARNING and CRITICAL ----------------------------------------
+
+- name: cert_monitor | Collect certs requiring alerts
+  ansible.builtin.set_fact:
+    _certs_to_alert: "{{ cert_status_list | selectattr('status', 'in', ['WARNING', 'CRITICAL']) | list }}"
+
+- name: cert_monitor | Send alerts
+  ansible.builtin.include_tasks: alert.yml
+  when: _certs_to_alert | length > 0
+
+# --- 5. Optionally fail on CRITICAL ------------------------------------------
+
+- name: cert_monitor | Fail if any certs are in CRITICAL state
+  ansible.builtin.fail:
+    msg: >
+      CRITICAL: {{ _critical_certs | length }} certificate(s) expire within
+      {{ cert_critical_days }} days on {{ inventory_hostname }}.
+      Subjects: {{ _critical_certs | map(attribute='subject') | join(', ') }}
+  vars:
+    _critical_certs: "{{ cert_status_list | selectattr('status', 'equalto', 'CRITICAL') | list }}"
+  when:
+    - cert_monitor_fail_on_critical
+    - cert_status_list | selectattr('status', 'equalto', 'CRITICAL') | list | length > 0

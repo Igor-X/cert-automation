@@ -1,0 +1,46 @@
+---
+# playbooks/monitor.yml
+#
+# Scans all HTTPS bindings on IIS servers for a given customer inventory,
+# reports cert expiry status, and sends alerts for WARNING/CRITICAL certs.
+#
+# Usage:
+#   # Single customer
+#   ansible-playbook playbooks/monitor.yml -i inventory/customer_a/hosts.yml
+#
+#   # All customers (bash loop)
+#   for inv in inventory/*/hosts.yml; do
+#     ansible-playbook playbooks/monitor.yml -i "$inv"
+#   done
+#
+#   # With vault password
+#   ansible-playbook playbooks/monitor.yml -i inventory/customer_a/hosts.yml --ask-vault-pass
+#
+# Variables (all have defaults in group_vars/all.yml):
+#   cert_alert_days      — warn when cert has fewer than this many days (default: 45)
+#   cert_critical_days   — critical threshold (default: 14)
+#   alert_method         — "email", "webhook", or "both" (default: "email")
+
+- name: Certificate expiry monitoring
+  hosts: iis_servers
+  gather_facts: true   # needed for ansible_date_time in report filename
+  serial: "{{ monitor_serial | default('100%') }}"  # run all hosts in parallel by default
+
+  pre_tasks:
+    - name: Authenticate with PasswordSafe
+      ansible.builtin.include_role:
+        name: passwordsafe
+        tasks_from: get_token
+      delegate_to: localhost
+      run_once: true
+      # Token is fetched once on the control node and shared across all hosts in the play
+
+  roles:
+    - role: cert_monitor
+
+  post_tasks:
+    - name: Display report location
+      ansible.builtin.debug:
+        msg: "Cert status report written to: {{ cert_monitor_report_path }}"
+      delegate_to: localhost
+      run_once: true

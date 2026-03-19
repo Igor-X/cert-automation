@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: cert_monitor
+  description: "Scans IIS HTTPS bindings, classifies cert expiry status, and sends alerts"
+  min_ansible_version: "2.14"
+dependencies:
+  - role: passwordsafe
+collections:
+  - name: ansible.windows
+  - name: community.windows
+  - name: community.general

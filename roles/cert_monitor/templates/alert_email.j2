@@ -1,0 +1,43 @@
+{# roles/cert_monitor/templates/alert_email.j2 #}
+Certificate Expiry Alert
+========================
+Customer : {{ inventory_dir | basename | upper }}
+Generated: {{ ansible_date_time.iso8601 }}
+
+{% set critical = _certs_to_alert | selectattr('status', 'equalto', 'CRITICAL') | list %}
+{% set warning  = _certs_to_alert | selectattr('status', 'equalto', 'WARNING')  | list %}
+
+{% if critical | length > 0 %}
+CRITICAL — Expires within {{ cert_critical_days }} days
+--------------------------------------------------------
+{% for cert in critical %}
+  Host    : {{ cert.hostname }}
+  Subject : {{ cert.subject }}
+  SAN     : {{ cert.san }}
+  Issuer  : {{ cert.issuer }}
+  Expires : {{ cert.not_after }} ({{ cert.days_remaining }} days remaining)
+  Serial  : {{ cert.serial }}
+  Binding : {{ cert.binding }}
+
+{% endfor %}
+{% endif %}
+
+{% if warning | length > 0 %}
+WARNING — Expires within {{ cert_alert_days }} days
+----------------------------------------------------
+{% for cert in warning %}
+  Host    : {{ cert.hostname }}
+  Subject : {{ cert.subject }}
+  SAN     : {{ cert.san }}
+  Issuer  : {{ cert.issuer }}
+  Expires : {{ cert.not_after }} ({{ cert.days_remaining }} days remaining)
+  Serial  : {{ cert.serial }}
+  Binding : {{ cert.binding }}
+
+{% endfor %}
+{% endif %}
+
+--
+This alert was generated automatically by cert-automation.
+To suppress: update cert_alert_days / cert_critical_days in group_vars.
+Report written to: {{ cert_monitor_report_path }}

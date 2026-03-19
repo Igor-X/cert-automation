@@ -1,0 +1,32 @@
+---
+# roles/passwordsafe/tasks/main.yml
+#
+# Provides two public entry points consumed by other roles:
+#
+#   1. get_token.yml  — authenticates with the Identity service and registers
+#                       `passwordsafe_auth_token` for use in subsequent calls.
+#
+#   2. get_credential.yml — retrieves a single credential from PasswordSafe and
+#                           registers `passwordsafe_credential` with shape:
+#                           { username: "...", password: "..." }
+#
+# Typical usage from another role's tasks:
+#
+#   - name: Authenticate with PasswordSafe
+#     ansible.builtin.include_role:
+#       name: passwordsafe
+#       tasks_from: get_token
+#
+#   - name: Fetch DigiCert API key
+#     ansible.builtin.include_role:
+#       name: passwordsafe
+#       tasks_from: get_credential
+#     vars:
+#       passwordsafe_credential_id: "{{ passwordsafe_digicert_credential_id }}"
+#
+#   - name: Use the credential
+#     ansible.builtin.debug:
+#       msg: "API key is {{ passwordsafe_credential.password }}"
+
+# This file is intentionally empty — callers use tasks_from to target specific
+# task files. Including the role without tasks_from is a no-op.

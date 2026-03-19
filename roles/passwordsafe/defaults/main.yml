@@ -1,0 +1,14 @@
+---
+# roles/passwordsafe/defaults/main.yml
+# These are fallback defaults only — real values come from group_vars or inventory.
+
+# RAX-AUTH domain name — matches the 'name' field in the auth body
+passwordsafe_auth_domain: "Rackspace"
+
+# Whether to suppress sensitive task output (set false temporarily to debug)
+# Mirrors the no_log_opt pattern in the internal reference implementation
+passwordsafe_no_log: true
+
+passwordsafe_token_cache_minutes: 55  # Identity tokens typically expire at 60m; renew before that
+passwordsafe_validate_certs: true     # Set false only in dev/test environments
+passwordsafe_timeout: 30             # HTTP timeout in seconds for all PasswordSafe calls

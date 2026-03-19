@@ -1,0 +1,55 @@
+---
+# playbooks/renew.yml
+#
+# Runs the full certificate renewal cycle for a customer:
+#   1. Checks if renewal is needed based on cert_alert_days threshold
+#   2. Generates a CSR, submits to DigiCert (or configured CA)
+#   3. Polls for issuance
+#   4. Packages as PFX, stores password in PasswordSafe
+#   5. Distributes to all IIS servers and rebinds
+#   6. Verifies the new cert is live
+#
+# Usage:
+#   # Normal run — only renews if within threshold window
+#   ansible-playbook playbooks/renew.yml -i inventory/customer_a/hosts.yml
+#
+#   # Force renewal regardless of current expiry
+#   ansible-playbook playbooks/renew.yml -i inventory/customer_a/hosts.yml \
+#     -e cert_renew_force=true
+#
+#   # Dry-run to see what would happen (check mode — skips actual CA calls)
+#   ansible-playbook playbooks/renew.yml -i inventory/customer_a/hosts.yml --check
+
+- name: Certificate renewal
+  hosts: iis_servers
+  gather_facts: true
+  serial: "100%"   # All hosts participate — cert is distributed to all of them
+
+  pre_tasks:
+    - name: Authenticate with PasswordSafe
+      ansible.builtin.include_role:
+        name: passwordsafe
+        tasks_from: get_token
+      delegate_to: localhost
+      run_once: true
+
+    - name: Display renewal configuration
+      ansible.builtin.debug:
+        msg:
+          - "Customer   : {{ inventory_dir | basename }}"
+          - "Domain     : {{ cert_domain }}"
+          - "CA         : {{ cert_ca_provider }}"
+          - "Threshold  : {{ cert_alert_days }} days"
+          - "Force      : {{ cert_renew_force | default(false) }}"
+      run_once: true
+
+  roles:
+    - role: cert_renew
+
+  post_tasks:
+    - name: Renewal complete
+      ansible.builtin.debug:
+        msg: >
+          Certificate renewal for {{ cert_domain }} ({{ inventory_dir | basename }}) completed.
+          New certificate is live on all {{ groups['iis_servers'] | length }} IIS server(s).
+      run_once: true

@@ -1,0 +1,161 @@
+---
+# roles/ca_digicert/tasks/issue.yml
+#
+# Issues a certificate via the DigiCert CertCentral REST API.
+#
+# Requires (set upstream by cert_renew):
+#   cert_csr_content        — PEM-formatted CSR string
+#   cert_domain             — primary CN / domain
+#   digicert_organization_id — pre-validated org ID in CertCentral
+#
+# Produces (registered as play facts for cert_renew to consume):
+#   cert_issued_pem         — the leaf certificate in PEM format
+#   cert_issued_chain_pem   — full chain (leaf + intermediates) in PEM format
+#   digicert_order_id       — CertCentral order ID (kept for audit/revocation)
+#   digicert_cert_id        — CertCentral certificate ID
+
+# --- 1. Retrieve DigiCert API key from PasswordSafe --------------------------
+
+- name: ca_digicert | Fetch DigiCert API key from PasswordSafe
+  ansible.builtin.include_role:
+    name: passwordsafe
+    tasks_from: get_credential
+  vars:
+    passwordsafe_credential_category: "{{ passwordsafe_digicert_credential_category }}"
+
+- name: ca_digicert | Register API key
+  ansible.builtin.set_fact:
+    _digicert_api_key: "{{ passwordsafe_credential.password }}"
+  no_log: true
+
+# --- 2. Resolve API base URL (staging vs production) -------------------------
+
+- name: ca_digicert | Set effective API base URL
+  ansible.builtin.set_fact:
+    _digicert_api_url: >-
+      {{
+        'https://certcentral.digicert.com/services/v2'
+        if digicert_use_staging | bool
+        else digicert_api_base_url
+      }}
+
+# --- 3. Submit certificate order to CertCentral ------------------------------
+
+- name: ca_digicert | Submit certificate order
+  ansible.builtin.uri:
+    url: "{{ _digicert_api_url }}/order/certificate/{{ digicert_product_type }}"
+    method: POST
+    headers:
+      X-DC-DEVKEY: "{{ _digicert_api_key }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      certificate:
+        common_name: "{{ cert_domain }}"
+        dns_names: "{{ cert_san_list | default([cert_domain]) | map('regex_replace', '^DNS:', '') | list }}"
+        csr: "{{ cert_csr_content }}"
+        signature_hash: "{{ digicert_signature_hash }}"
+        server_platform:
+          id: "{{ digicert_server_platform_id }}"
+      organization:
+        id: "{{ digicert_organization_id }}"
+      validity_years: "{{ digicert_validity_years }}"
+      payment_method: "balance"
+    status_code: [201, 200]
+    validate_certs: true
+    timeout: "{{ digicert_api_timeout }}"
+  register: _order_response
+  no_log: true
+  delegate_to: localhost
+
+- name: ca_digicert | Register order ID
+  ansible.builtin.set_fact:
+    digicert_order_id: "{{ _order_response.json.id }}"
+
+- name: ca_digicert | Report order submitted
+  ansible.builtin.debug:
+    msg: "DigiCert order submitted. Order ID: {{ digicert_order_id }} | Status: {{ _order_response.json.status }}"
+
+# --- 4. Poll for issuance ----------------------------------------------------
+# DigiCert DV issues in minutes; OV/EV may take hours.
+# We poll up to digicert_poll_max_attempts times with digicert_poll_interval_seconds delay.
+
+- name: ca_digicert | Poll order status until issued
+  ansible.builtin.uri:
+    url: "{{ _digicert_api_url }}/order/certificate/{{ digicert_order_id }}"
+    method: GET
+    headers:
+      X-DC-DEVKEY: "{{ _digicert_api_key }}"
+      Accept: "application/json"
+    status_code: 200
+    validate_certs: true
+    timeout: "{{ digicert_api_timeout }}"
+  register: _poll_response
+  delegate_to: localhost
+  no_log: true
+  retries: "{{ digicert_poll_max_attempts }}"
+  delay: "{{ digicert_poll_interval_seconds }}"
+  until: _poll_response.json.status in ['issued', 'needs_approval', 'rejected', 'canceled']
+  failed_when: _poll_response.json.status in ['rejected', 'canceled']
+
+- name: ca_digicert | Handle needs_approval status
+  ansible.builtin.fail:
+    msg: >
+      DigiCert order {{ digicert_order_id }} is awaiting manual approval in CertCentral.
+      This is expected for OV/EV certs. Once approved, re-run the renew playbook
+      with cert_renew_force=true to pick up the issued cert using the existing order,
+      or approve and reissue from CertCentral and use bind.yml to distribute manually.
+  when: _poll_response.json.status == 'needs_approval'
+
+- name: ca_digicert | Register certificate ID from issued order
+  ansible.builtin.set_fact:
+    digicert_cert_id: "{{ _poll_response.json.certificate.id }}"
+
+- name: ca_digicert | Report issuance
+  ansible.builtin.debug:
+    msg: "Certificate issued. Order ID: {{ digicert_order_id }} | Cert ID: {{ digicert_cert_id }}"
+
+# --- 5. Download issued certificate and chain --------------------------------
+
+- name: ca_digicert | Download certificate in PEM format (leaf only)
+  ansible.builtin.uri:
+    url: "{{ _digicert_api_url }}/certificate/{{ digicert_cert_id }}/download/format/pem"
+    method: GET
+    headers:
+      X-DC-DEVKEY: "{{ _digicert_api_key }}"
+    return_content: true
+    status_code: 200
+    validate_certs: true
+    timeout: "{{ digicert_api_timeout }}"
+  register: _cert_pem
+  delegate_to: localhost
+  no_log: true
+
+- name: ca_digicert | Download full chain in PEM format (cert + intermediates)
+  ansible.builtin.uri:
+    url: "{{ _digicert_api_url }}/certificate/{{ digicert_cert_id }}/download/format/pem_all"
+    method: GET
+    headers:
+      X-DC-DEVKEY: "{{ _digicert_api_key }}"
+    return_content: true
+    status_code: 200
+    validate_certs: true
+    timeout: "{{ digicert_api_timeout }}"
+  register: _cert_chain_pem
+  delegate_to: localhost
+  no_log: true
+
+# --- 6. Register outputs for cert_renew to consume ---------------------------
+
+- name: ca_digicert | Register issued cert facts
+  ansible.builtin.set_fact:
+    cert_issued_pem: "{{ _cert_pem.content }}"
+    cert_issued_chain_pem: "{{ _cert_chain_pem.content }}"
+  no_log: true
+
+- name: ca_digicert | Confirm cert download complete
+  ansible.builtin.debug:
+    msg: >
+      Certificate downloaded from DigiCert.
+      Order: {{ digicert_order_id }} | Cert ID: {{ digicert_cert_id }}
+      Chain length: {{ cert_issued_chain_pem | length }} bytes

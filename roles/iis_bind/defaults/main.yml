@@ -1,0 +1,25 @@
+---
+# roles/iis_bind/defaults/main.yml
+
+# IIS site whose HTTPS binding will be updated
+iis_site_name: "Default Web Site"
+
+# Certificate store to import into (almost always "My" / Personal)
+iis_cert_store: "My"
+
+# Temporary staging path on the Windows target for PFX transfer
+# Cleaned up automatically after import
+iis_cert_staging_path: "C:\\Windows\\Temp\\cert_staging"
+
+# Port for the HTTPS binding
+iis_https_port: 443
+
+# Whether to require SNI on the binding
+iis_binding_require_sni: false
+
+# If true, remove any previous certificate from the store after a successful
+# rebind. Set false if other sites share the same cert.
+iis_remove_old_cert: false
+
+# How long (seconds) to wait for IIS to pick up the new binding before checking
+iis_binding_settle_seconds: 5

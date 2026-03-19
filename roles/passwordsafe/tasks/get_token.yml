@@ -1,0 +1,56 @@
+---
+# roles/passwordsafe/tasks/get_token.yml
+#
+# Authenticates against the Rackspace Cloud Identity service and registers
+# `passwordsafe_auth_token` as a fact for the current play.
+#
+# Required variables (set in group_vars or inventory):
+#   - passwordsafe_auth_domain         — RAX-AUTH domain name (e.g. "Rackspace")
+#   - passwordsafe_identity_username   — service account username
+#   - passwordsafe_identity_password   — service account password (Ansible Vault encrypted)
+#
+# Registers:
+#   - passwordsafe_auth_token  (string) — value for X-Auth-Token header
+
+- name: PasswordSafe | Validate required auth variables are defined
+  ansible.builtin.assert:
+    that:
+      - passwordsafe_auth_domain is defined and passwordsafe_auth_domain | length > 0
+      - passwordsafe_identity_username is defined and passwordsafe_identity_username | length > 0
+      - passwordsafe_identity_password is defined and passwordsafe_identity_password | length > 0
+    fail_msg: >
+      passwordsafe_auth_domain, passwordsafe_identity_username, and passwordsafe_identity_password
+      must all be set. Check group_vars or inventory for the relevant customer.
+    quiet: true
+
+- name: PasswordSafe | Obtain Identity auth token
+  ansible.builtin.uri:
+    url: "https://identity-internal.api.rackspacecloud.com/v2.0/tokens"
+    method: POST
+    body_format: json
+    body:
+      auth:
+        RAX-AUTH:domain:
+          name: "{{ passwordsafe_auth_domain }}"
+        passwordCredentials:
+          username: "{{ passwordsafe_identity_username }}"
+          password: "{{ passwordsafe_identity_password }}"
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+    return_content: true
+    status_code: 200
+    validate_certs: "{{ passwordsafe_validate_certs }}"
+    timeout: "{{ passwordsafe_timeout }}"
+  register: _identity_response
+  no_log: "{{ passwordsafe_no_log }}"
+
+- name: PasswordSafe | Register auth token as play fact
+  ansible.builtin.set_fact:
+    passwordsafe_auth_token: "{{ _identity_response.json.access.token.id }}"
+    passwordsafe_token_expires: "{{ _identity_response.json.access.token.expires }}"
+  no_log: "{{ passwordsafe_no_log }}"
+
+- name: PasswordSafe | Confirm token acquired (non-sensitive confirmation)
+  ansible.builtin.debug:
+    msg: "PasswordSafe auth token acquired. Expires: {{ passwordsafe_token_expires }}"

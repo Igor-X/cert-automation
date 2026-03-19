@@ -1,0 +1,66 @@
+---
+# ------------------------------------------------------------------------------
+# cert-automation — shared configuration
+# All customer inventories inherit these values.
+# Override per-customer in inventory/<customer>/group_vars/all.yml
+# ------------------------------------------------------------------------------
+
+# --- Certificate expiry thresholds -------------------------------------------
+# Trigger an alert when a cert has fewer than this many days remaining
+cert_alert_days: 45
+
+# Trigger a CRITICAL alert (separate notification channel) below this threshold
+cert_critical_days: 14
+
+# --- PasswordSafe / Identity --------------------------------------------------
+# Base URL of the Rackspace Cloud Identity service used to obtain auth tokens
+# identity_base_url: removed — Identity URL is hardcoded in the passwordsafe role
+
+# Base URL of the internal PasswordSafe API
+# passwordsafe_base_url: removed — URL is hardcoded as https://passwordsafe.corp.rackspace.com
+
+# Identity service account username (non-sensitive — the password is in Vault)
+# Override this per-customer if different service accounts are used
+passwordsafe_identity_username: "svc-cert-automation"
+
+# PasswordSafe project ID for this customer's credentials.
+# MUST be overridden in each customer's group_vars.
+passwordsafe_project_id: ""
+
+# Credential ID within the project that holds the DigiCert API key.
+# MUST be overridden in each customer's group_vars.
+passwordsafe_digicert_credential_id: ""
+
+# Credential ID for the PFX export password used when distributing certs.
+# MUST be overridden in each customer's group_vars.
+passwordsafe_pfx_credential_id: ""
+
+# --- IIS target configuration ------------------------------------------------
+# Name of the IIS site whose HTTPS binding should be managed
+iis_site_name: "Default Web Site"
+
+# Certificate store where certs are imported (almost always "My")
+iis_cert_store: "My"
+
+# Local staging path on each Windows target for PFX transfer (cleaned up after)
+iis_cert_staging_path: "C:\\Windows\\Temp\\cert_staging"
+
+# --- Alerting ----------------------------------------------------------------
+# Notification method: "email", "webhook", or "both"
+alert_method: "email"
+
+# SMTP settings (used when alert_method is "email" or "both")
+alert_smtp_host: "smtp.example.internal"
+alert_smtp_port: 25
+alert_smtp_from: "cert-automation@example.internal"
+alert_smtp_to: "ops-alerts@example.internal"
+
+# Webhook URL (used when alert_method is "webhook" or "both")
+# e.g. Slack incoming webhook, Teams connector, PagerDuty events API
+alert_webhook_url: ""
+
+# --- Ansible connection defaults for Windows targets -------------------------
+ansible_connection: winrm
+ansible_winrm_transport: kerberos   # or "ntlm" / "credssp" depending on your environment
+ansible_winrm_server_cert_validation: validate
+ansible_port: 5986

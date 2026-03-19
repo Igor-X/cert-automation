@@ -1,0 +1,30 @@
+---
+# roles/cert_renew/defaults/main.yml
+
+# Trigger renewal when a cert has fewer than this many days remaining
+cert_alert_days: 45
+
+# If true, renew even if the cert is not yet within the alert window.
+# Useful for forced renewals (e.g. after a CA key compromise).
+cert_renew_force: false
+
+# CA provider to use for this customer — determines which ca_* role is called
+# Supported values: "digicert"  (sectigo, entrust etc. added in future phases)
+cert_ca_provider: "digicert"
+
+# Number of seconds to wait between polling DigiCert for issuance status
+cert_renew_poll_interval: 30
+
+# Maximum number of poll attempts before giving up (30s * 40 = 20 minutes)
+cert_renew_poll_max_attempts: 40
+
+# Path on the control node where CSRs and issued certs are temporarily written
+# These are cleaned up after successful binding
+cert_renew_workspace: "/tmp/cert-automation/{{ inventory_dir | basename }}"
+
+# Key size for the new CSR
+cert_renew_key_bits: 2048
+
+# Whether to distribute the renewed cert to all hosts in the play or just the
+# first one (useful for testing). "all" or "first"
+cert_renew_distribute_to: "all"

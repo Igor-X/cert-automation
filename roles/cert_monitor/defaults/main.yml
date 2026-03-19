@@ -1,0 +1,16 @@
+---
+# roles/cert_monitor/defaults/main.yml
+
+# Days-remaining thresholds — override in group_vars/all.yml or per-customer
+cert_alert_days: 45
+cert_critical_days: 14
+
+# IIS site to inspect (checks all HTTPS bindings on this site)
+iis_site_name: "Default Web Site"
+
+# Write a JSON report of cert status to this path on the control node
+cert_monitor_report_path: "/var/log/cert-automation/cert_report_{{ inventory_dir | basename }}_{{ ansible_date_time.date }}.json"
+
+# Whether to fail the play if any cert is in CRITICAL state
+# Set false if you want monitoring-only without blocking other plays
+cert_monitor_fail_on_critical: false
