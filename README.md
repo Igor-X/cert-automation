@@ -1,6 +1,6 @@
 # cert-automation
 
-Ansible-based certificate lifecycle management for IIS servers across multiple customers and CAs.
+Ansible-based certificate lifecycle management for IIS servers across multiple customers and CAs
 
 ## Project Structure
 
